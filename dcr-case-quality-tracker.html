@@ -1,0 +1,1028 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>D.C.R Clarendon - Case File Quality Tracker</title>
+<link href="https://fonts.googleapis.com/css2?family=Playfair+Display:wght@400;600;700&family=DM+Sans:wght@300;400;500;600&family=DM+Mono:wght@400;500&display=swap" rel="stylesheet">
+<script src="https://cdnjs.cloudflare.com/ajax/libs/Chart.js/4.4.1/chart.umd.js"></script>
+
+<!-- Firebase -->
+<script type="module">
+import { initializeApp } from "https://www.gstatic.com/firebasejs/10.12.0/firebase-app.js";
+import { getFirestore, collection, doc, setDoc, getDoc, getDocs, deleteDoc, query, orderBy, serverTimestamp } from "https://www.gstatic.com/firebasejs/10.12.0/firebase-firestore.js";
+
+const firebaseConfig = {
+  apiKey: "AIzaSyC8oG2Wl1ZUys9RBZ6EQSbKjnGaZLOcTsQ",
+  authDomain: "dcr-clarendon.firebaseapp.com",
+  projectId: "dcr-clarendon",
+  storageBucket: "dcr-clarendon.firebasestorage.app",
+  messagingSenderId: "1034606146681",
+  appId: "1:1034606146681:web:d8adc6711f66ba149010a8",
+  measurementId: "G-7DYRB0MJ6F"
+};
+
+const firebaseApp = initializeApp(firebaseConfig);
+const db = getFirestore(firebaseApp);
+
+// -- Expose DB helpers to global scope --
+window._db = {
+  async getUser(username) {
+    try {
+      const snap = await getDoc(doc(db, "users", username.toUpperCase().replace(/\s+/g,"_")));
+      return snap.exists() ? snap.data() : null;
+    } catch(e) { return null; }
+  },
+  async getAllUsers() {
+    try {
+      const snap = await getDocs(collection(db, "users"));
+      return snap.docs.map(d => ({ ...d.data(), _docId: d.id }));
+    } catch(e) { return []; }
+  },
+  async saveUser(user) {
+    try {
+      // Use the stored username field as the key so we always write back to the
+      // same Firestore document the record was originally created under.
+      // Fall back to deriving from displayName only if username is absent.
+      const key = user.username || user.displayName.toUpperCase().replace(/\s+/g,"_");
+      await setDoc(doc(db, "users", key), user);
+      return true;
+    } catch(e) { return false; }
+  },
+  async getAllRecords() {
+    try {
+      const q = query(collection(db, "records"), orderBy("date", "desc"));
+      const snap = await getDocs(q);
+      return snap.docs.map(d => ({ id: d.id, ...d.data() }));
+    } catch(e) { return []; }
+  },
+  async saveRecord(record) {
+    try {
+      await setDoc(doc(db, "records", record.id), { ...record, timestamp: serverTimestamp() });
+      return true;
+    } catch(e) { return false; }
+  },
+  async deleteRecord(id) {
+    try {
+      await deleteDoc(doc(db, "records", id));
+      return true;
+    } catch(e) { return false; }
+  },
+  async deleteUser(displayName) {
+    try {
+      const key = displayName.toUpperCase().replace(/\s+/g,"_");
+      await deleteDoc(doc(db, "users", key));
+      if(displayName === "Administrator") {
+        try { await deleteDoc(doc(db, "users", "ADMIN")); } catch(e2){}
+      }
+      return true;
+    } catch(e) { return false; }
+  },
+  async deleteUserByKey(docKey) {
+    try {
+      await deleteDoc(doc(db, "users", docKey));
+      return true;
+    } catch(e) { return false; }
+  },
+  async deleteAllUsersExceptSelf(selfDisplayName) {
+    try {
+      const snap = await getDocs(collection(db, "users"));
+      const deletes = snap.docs
+        .filter(d => {
+          const data = d.data();
+          return data.displayName !== selfDisplayName;
+        })
+        .map(d => deleteDoc(doc(db, "users", d.id)));
+      await Promise.all(deletes);
+      return true;
+    } catch(e) { return false; }
+  },
+  async initAdmin() {
+    try {
+      const key = "ADMIN";
+      const snap = await getDoc(doc(db, "users", key));
+      if (!snap.exists()) {
+        await setDoc(doc(db, "users", key), {
+          username: "ADMIN", displayName: "Administrator",
+          role: "admin", passwordHash: window._hash("Admin1234"),
+          mustChange: false, station: "", active: true,
+          created: new Date().toISOString()
+        });
+      }
+    } catch(e) {}
+  },
+  async forceResetUsers() {
+    try {
+      // Force-reset ADMIN password to Admin1234
+      await setDoc(doc(db, "users", "ADMIN"), {
+        username: "ADMIN", displayName: "Administrator",
+        role: "admin", passwordHash: window._hash("Admin1234"),
+        mustChange: false, station: "", active: true,
+        created: new Date().toISOString()
+      });
+      // Force-reset Craig Daly password to changeme (mustChange so they set a new one)
+      await setDoc(doc(db, "users", "CRAIG_DALY"), {
+        username: "CRAIG_DALY", displayName: "Craig Daly",
+        role: "officer", passwordHash: window._hash("changeme"),
+        mustChange: true, station: "", active: true,
+        created: new Date().toISOString()
+      });
+      return true;
+    } catch(e) { return false; }
+  }
+};
+
+// Signal app that Firebase is ready
+window._fbReady = true;
+document.dispatchEvent(new Event("fb-ready"));
+</script>
+
+<style>
+:root {
+  --navy:#0d1825;--navy2:#131f2e;--navy3:#192840;--navy4:#1e3050;
+  --gold:#c9a84c;--gold2:#e8c96a;--gold3:#f5dfa0;
+  --gold-dim:rgba(201,168,76,0.14);--gold-dim2:rgba(201,168,76,0.07);
+  --text:#eae3d2;--text2:#9e9282;--text3:#5e5649;
+  --red-bg:rgba(192,57,43,0.16);--red-t:#e8796a;
+  --amber-bg:rgba(212,135,10,0.16);--amber-t:#f0a832;
+  --green-bg:rgba(26,122,74,0.16);--green-t:#4ec989;
+  --blue-bg:rgba(55,138,221,0.14);--blue-t:#6ab4f0;
+  --border:rgba(201,168,76,0.16);--border2:rgba(201,168,76,0.28);
+  --r:6px;--rlg:12px;--rxl:18px;
+}
+*,*::before,*::after{box-sizing:border-box;margin:0;padding:0}
+html,body{height:100%;font-family:'DM Sans',sans-serif;background:var(--navy);color:var(--text);font-size:14px;line-height:1.6;overflow-x:hidden}
+body::before{content:'';position:fixed;inset:0;pointer-events:none;z-index:0;
+  background:radial-gradient(ellipse 80% 60% at 15% 40%,rgba(201,168,76,0.03) 0%,transparent 70%),
+  radial-gradient(ellipse 60% 80% at 85% 70%,rgba(22,40,70,0.5) 0%,transparent 60%);}
+
+/* -- SPLASH / LOADING -- */
+#splash{position:fixed;inset:0;z-index:2000;background:var(--navy);display:flex;flex-direction:column;align-items:center;justify-content:center;gap:1rem}
+.splash-crest{width:60px;height:60px;border-radius:50%;border:2px solid var(--gold);display:flex;align-items:center;justify-content:center;font-family:'Playfair Display',serif;font-size:16px;font-weight:700;color:var(--gold);animation:crestPulse 1.5s ease infinite}
+@keyframes crestPulse{0%,100%{box-shadow:0 0 0 0 rgba(201,168,76,0.4)}50%{box-shadow:0 0 0 12px rgba(201,168,76,0)}}
+.splash-text{font-family:'Playfair Display',serif;font-size:18px;color:var(--gold2)}
+.splash-sub{font-size:11px;letter-spacing:2px;text-transform:uppercase;color:var(--text2)}
+.splash-spin{width:20px;height:20px;border:2px solid var(--border);border-top-color:var(--gold);border-radius:50%;animation:spin .7s linear infinite;margin-top:8px}
+
+/* -- LOGIN -- */
+#login-screen{position:fixed;inset:0;z-index:1000;display:none;align-items:center;justify-content:center;background:var(--navy)}
+#login-screen::before{content:'';position:absolute;inset:0;background:radial-gradient(ellipse 100% 80% at 50% 50%,rgba(201,168,76,0.05) 0%,transparent 65%)}
+.login-box{position:relative;z-index:1;width:100%;max-width:400px;padding:0 1.5rem;animation:loginFade .5s ease both}
+@keyframes loginFade{from{opacity:0;transform:translateY(24px)}to{opacity:1;transform:translateY(0)}}
+.login-crest{width:64px;height:64px;border-radius:50%;border:2px solid var(--gold);display:flex;align-items:center;justify-content:center;font-family:'Playfair Display',serif;font-size:18px;font-weight:700;color:var(--gold);margin:0 auto 1.5rem;letter-spacing:1px}
+.login-title{font-family:'Playfair Display',serif;font-size:22px;font-weight:700;color:var(--gold2);text-align:center;line-height:1.2;margin-bottom:4px}
+.login-sub{font-size:11px;letter-spacing:2px;text-transform:uppercase;color:var(--text2);text-align:center;margin-bottom:2rem}
+.login-card{background:var(--navy2);border:1px solid var(--border);border-radius:var(--rxl);padding:2rem}
+.login-card .form-title{font-size:12px;font-weight:600;letter-spacing:1px;text-transform:uppercase;color:var(--text2);margin-bottom:1.25rem}
+.lf{display:flex;flex-direction:column;gap:6px;margin-bottom:14px}
+.lf label{font-size:11px;font-weight:500;letter-spacing:.5px;color:var(--text2)}
+.lf input{background:var(--navy3);border:1px solid rgba(201,168,76,.2);border-radius:var(--r);padding:10px 13px;font-size:13px;color:var(--text);font-family:'DM Sans',sans-serif;outline:none;transition:border-color .2s,box-shadow .2s;width:100%}
+.lf input::placeholder{color:var(--text3)}
+.lf input:focus{border-color:var(--gold);box-shadow:0 0 0 3px rgba(201,168,76,.1)}
+.login-btn{width:100%;padding:11px;font-size:12px;font-weight:700;letter-spacing:1px;text-transform:uppercase;background:var(--gold);color:var(--navy);border:none;border-radius:var(--r);cursor:pointer;font-family:'DM Sans',sans-serif;transition:background .2s;margin-top:6px}
+.login-btn:hover{background:var(--gold2)}
+.login-btn:disabled{opacity:.5;cursor:not-allowed}
+.login-err{background:var(--red-bg);border:1px solid rgba(232,121,106,.3);border-radius:var(--r);padding:9px 13px;font-size:12px;color:var(--red-t);margin-bottom:12px;display:none}
+.login-hint{font-size:11px;color:var(--text3);text-align:center;margin-top:1rem}
+
+/* -- CHANGE PW MODAL -- */
+#cpw-modal{position:fixed;inset:0;z-index:900;background:rgba(13,24,37,.92);display:none;align-items:center;justify-content:center}
+#cpw-modal.open{display:flex}
+.modal-box{background:var(--navy2);border:1px solid var(--border2);border-radius:var(--rxl);padding:2rem;width:100%;max-width:420px;margin:1rem;animation:loginFade .3s ease both}
+.modal-title{font-family:'Playfair Display',serif;font-size:18px;color:var(--gold2);margin-bottom:6px}
+.modal-sub{font-size:13px;color:var(--text2);margin-bottom:1.5rem}
+.modal-warn{background:var(--amber-bg);border:1px solid rgba(240,168,50,.3);border-radius:var(--r);padding:10px 13px;font-size:12px;color:var(--amber-t);margin-bottom:1.25rem;line-height:1.5}
+
+/* -- APP SHELL -- */
+#app{display:none;flex-direction:column;min-height:100vh;position:relative;z-index:1}
+#app.visible{display:flex}
+header{position:sticky;top:0;z-index:200;background:rgba(13,24,37,.97);border-bottom:1px solid var(--border);backdrop-filter:blur(14px);padding:0 1.75rem;display:flex;align-items:center;justify-content:space-between;height:60px;flex-shrink:0}
+.hbrand{display:flex;align-items:center;gap:13px}
+.hcrest{width:36px;height:36px;border-radius:50%;border:1.5px solid var(--gold);display:flex;align-items:center;justify-content:center;font-family:'Playfair Display',serif;font-size:11px;font-weight:700;color:var(--gold);letter-spacing:.5px;flex-shrink:0}
+.htitle{font-family:'Playfair Display',serif;font-size:14px;font-weight:600;color:var(--gold2);line-height:1.2}
+.hsub{font-size:10px;font-weight:300;color:var(--text2);letter-spacing:1.5px;text-transform:uppercase}
+.hright{display:flex;align-items:center;gap:12px}
+.hdate{font-size:11px;color:var(--text2);font-family:'DM Mono',monospace}
+.sync-pill{display:flex;align-items:center;gap:6px;font-size:11px;color:var(--text2);padding:4px 10px;border:0.5px solid var(--border);border-radius:20px}
+.sdot{width:6px;height:6px;border-radius:50%;background:var(--green-t);animation:pulse 2s infinite}
+@keyframes pulse{0%,100%{opacity:1}50%{opacity:.4}}
+.user-chip{display:flex;align-items:center;gap:8px;background:var(--navy3);border:1px solid var(--border);border-radius:20px;padding:5px 12px 5px 6px}
+.u-avatar{width:24px;height:24px;border-radius:50%;background:var(--gold-dim);border:1px solid var(--border2);display:flex;align-items:center;justify-content:center;font-size:10px;font-weight:700;color:var(--gold)}
+.u-name{font-size:12px;font-weight:500;color:var(--text)}
+.u-role{font-size:10px;color:var(--text2);margin-left:2px}
+.btn-logout{padding:5px 13px;font-size:11px;font-weight:600;letter-spacing:.5px;text-transform:uppercase;border:1px solid var(--border2);background:transparent;color:var(--text2);border-radius:var(--r);cursor:pointer;font-family:'DM Sans',sans-serif;transition:all .2s}
+.btn-logout:hover{background:var(--red-bg);color:var(--red-t);border-color:rgba(232,121,106,.4)}
+nav{background:var(--navy2);border-bottom:1px solid var(--border);padding:0 1.75rem;display:flex;flex-shrink:0}
+nav button{padding:13px 18px;font-size:11px;font-weight:500;letter-spacing:1px;text-transform:uppercase;border:none;background:transparent;color:var(--text2);cursor:pointer;border-bottom:2px solid transparent;transition:all .2s;font-family:'DM Sans',sans-serif}
+nav button:hover{color:var(--text)}
+nav button.active{color:var(--gold);border-bottom-color:var(--gold)}
+nav button.admin-tab{color:var(--blue-t)}
+nav button.admin-tab.active{color:var(--blue-t);border-bottom-color:var(--blue-t)}
+main{max-width:1200px;margin:0 auto;padding:1.75rem 1.5rem;flex:1;width:100%}
+.view{display:none;animation:fadeUp .25s ease both}
+.view.active{display:block}
+@keyframes fadeUp{from{opacity:0;transform:translateY(8px)}to{opacity:1;transform:translateY(0)}}
+@keyframes spin{to{transform:rotate(360deg)}}
+
+/* -- METRICS -- */
+.metrics{display:grid;grid-template-columns:repeat(4,minmax(0,1fr));gap:12px;margin-bottom:1.5rem}
+.metric{background:var(--navy2);border:1px solid var(--border);border-radius:var(--rlg);padding:1.25rem 1.25rem 1rem;position:relative;overflow:hidden;transition:border-color .2s}
+.metric:hover{border-color:var(--border2)}
+.metric::after{content:'';position:absolute;top:0;left:0;right:0;height:2px;background:var(--gold);opacity:.5}
+.metric.red::after{background:var(--red-t)}
+.metric.green::after{background:var(--green-t)}
+.metric.blue::after{background:var(--blue-t)}
+.metric .lbl{font-size:10px;font-weight:500;letter-spacing:1.2px;text-transform:uppercase;color:var(--text2);margin-bottom:8px}
+.metric .val{font-family:'Playfair Display',serif;font-size:30px;font-weight:700;line-height:1;color:var(--gold2)}
+.metric.red .val{color:var(--red-t)}.metric.green .val{color:var(--green-t)}.metric.blue .val{color:var(--blue-t)}
+.metric .sub{font-size:11px;color:var(--text3);margin-top:4px}
+
+/* -- CARDS -- */
+.card{background:var(--navy2);border:1px solid var(--border);border-radius:var(--rlg);padding:1.5rem;margin-bottom:1.25rem}
+.card-hdr{display:flex;align-items:flex-start;justify-content:space-between;margin-bottom:1.25rem;padding-bottom:1rem;border-bottom:1px solid var(--border)}
+.card-title{font-family:'Playfair Display',serif;font-size:15px;font-weight:600;color:#f5f0e8}
+.card-sub{font-size:11px;color:var(--text2);margin-top:2px}
+.g2{display:grid;grid-template-columns:1fr 1fr;gap:1.25rem;margin-bottom:1.25rem}
+.g3{display:grid;grid-template-columns:2fr 1fr;gap:1.25rem;margin-bottom:1.25rem}
+
+/* -- FORM -- */
+.fsec{margin-bottom:1.5rem}
+.fsec-title{font-size:10px;font-weight:600;letter-spacing:1.5px;text-transform:uppercase;color:var(--gold);margin-bottom:12px;padding-bottom:6px;border-bottom:1px solid var(--gold-dim)}
+.fg{display:grid;grid-template-columns:1fr 1fr;gap:12px;margin-bottom:12px}
+.field{display:flex;flex-direction:column;gap:5px}
+.field label{font-size:11px;font-weight:500;letter-spacing:.4px;color:var(--text2)}
+.req{color:var(--gold)}
+.field input,.field select,.field textarea{width:100%;background:var(--navy3);border:1px solid rgba(201,168,76,.18);border-radius:var(--r);padding:9px 12px;font-size:13px;color:var(--text);font-family:'DM Sans',sans-serif;outline:none;transition:border-color .2s,box-shadow .2s;-webkit-appearance:none}
+.field input::placeholder,.field textarea::placeholder{color:var(--text3)}
+.field select option{background:var(--navy2)}
+.field input:focus,.field select:focus,.field textarea:focus{border-color:var(--gold);box-shadow:0 0 0 3px rgba(201,168,76,.1)}
+.field textarea{height:80px;resize:vertical}
+
+/* -- BUTTONS -- */
+.btn{padding:9px 20px;font-size:11px;font-weight:600;letter-spacing:.8px;text-transform:uppercase;border-radius:var(--r);cursor:pointer;transition:all .2s;font-family:'DM Sans',sans-serif;border:1px solid var(--border2);background:transparent;color:var(--text2)}
+.btn:hover{background:var(--gold-dim);color:var(--gold);border-color:var(--gold)}
+.btn:disabled{opacity:.4;cursor:not-allowed}
+.btn-gold{background:var(--gold);color:var(--navy);border-color:var(--gold);font-weight:700}
+.btn-gold:hover{background:var(--gold2);border-color:var(--gold2);color:var(--navy)}
+.btn-sm{padding:6px 14px;font-size:11px}
+.btn-danger{border-color:rgba(192,57,43,.3);color:var(--red-t)}
+.btn-danger:hover{background:var(--red-bg);border-color:var(--red-t)}
+.btn-blue{border-color:rgba(55,138,221,.3);color:var(--blue-t)}
+.btn-blue:hover{background:var(--blue-bg);border-color:var(--blue-t)}
+.brow{display:flex;gap:10px;align-items:center;flex-wrap:wrap}
+
+/* -- TABLE -- */
+.tw{overflow-x:auto}
+table{width:100%;border-collapse:collapse;font-size:13px}
+thead th{text-align:left;font-size:10px;font-weight:600;letter-spacing:1px;text-transform:uppercase;color:var(--text3);padding:10px 12px;border-bottom:1px solid var(--border);white-space:nowrap}
+tbody td{padding:11px 12px;border-bottom:1px solid rgba(201,168,76,.06);color:var(--text);vertical-align:middle}
+tbody tr:last-child td{border-bottom:none}
+tbody tr{transition:background .15s}
+tbody tr:hover td{background:var(--gold-dim2)}
+
+/* -- BADGES -- */
+.badge{display:inline-flex;align-items:center;padding:3px 9px;border-radius:20px;font-size:11px;font-weight:600;letter-spacing:.3px;font-family:'DM Mono',monospace}
+.sev-Major{background:var(--red-bg);color:var(--red-t)}
+.sev-Moderate{background:var(--amber-bg);color:var(--amber-t)}
+.sev-Minor{background:var(--green-bg);color:var(--green-t)}
+.role-admin{background:var(--blue-bg);color:var(--blue-t)}
+.role-officer{background:var(--gold-dim);color:var(--gold2)}
+.status-active{background:var(--green-bg);color:var(--green-t)}
+.status-inactive{background:var(--red-bg);color:var(--red-t)}
+
+/* -- FILTERS -- */
+.filters{display:flex;gap:10px;flex-wrap:wrap;align-items:center;margin-bottom:1.25rem}
+.filters select,.filters input{background:var(--navy3);border:1px solid rgba(201,168,76,.18);border-radius:var(--r);padding:8px 12px;font-size:13px;color:var(--text);font-family:'DM Sans',sans-serif;outline:none;transition:border-color .2s}
+.filters select:focus,.filters input:focus{border-color:var(--gold)}
+.filters select option{background:var(--navy2)}
+.filters input{min-width:190px}
+.filters input::placeholder{color:var(--text3)}
+
+/* -- MISC -- */
+.cw{position:relative;width:100%}
+.empty{text-align:center;padding:3rem;color:var(--text3);font-size:13px}
+.loading{display:flex;align-items:center;gap:10px;padding:2.5rem;justify-content:center;color:var(--text2);font-size:13px}
+.spin{width:18px;height:18px;border:2px solid var(--border);border-top-color:var(--gold);border-radius:50%;animation:spin .7s linear infinite}
+.toast{position:fixed;bottom:1.5rem;right:1.5rem;padding:12px 20px;border-radius:var(--r);font-size:13px;font-weight:500;display:flex;align-items:center;gap:8px;z-index:9999;transition:all .3s;transform:translateY(20px);opacity:0;pointer-events:none;max-width:360px}
+.toast.show{transform:translateY(0);opacity:1}
+.toast.success{background:var(--navy3);border:1px solid var(--green-t);color:var(--green-t)}
+.toast.error{background:var(--navy3);border:1px solid var(--red-t);color:var(--red-t)}
+.toast.info{background:var(--navy3);border:1px solid var(--gold);color:var(--gold2)}
+hr.div{border:none;border-top:1px solid var(--border);margin:1.5rem 0}
+.rsec{margin-bottom:2rem}
+.rsec-title{font-family:'Playfair Display',serif;font-size:15px;color:var(--gold2);margin-bottom:1rem;display:flex;align-items:center;gap:10px}
+.rsec-title::before{content:'';width:3px;height:18px;background:var(--gold);border-radius:2px}
+.rbar{display:flex;align-items:center;gap:10px;margin-bottom:8px}
+.rbar-lbl{width:130px;font-size:12px;color:var(--text2);white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.rbar-track{flex:1;height:6px;background:var(--navy3);border-radius:3px;overflow:hidden}
+.rbar-fill{height:100%;border-radius:3px;background:var(--gold);transition:width .6s ease}
+.rbar-n{width:28px;text-align:right;font-size:12px;font-weight:600;color:var(--gold2);font-family:'DM Mono',monospace}
+.user-grid{display:grid;grid-template-columns:1fr 1fr;gap:12px;margin-bottom:1.25rem}
+.user-card{background:var(--navy3);border:1px solid var(--border);border-radius:var(--rlg);padding:1.25rem;display:flex;align-items:center;justify-content:space-between;gap:1rem;transition:border-color .2s}
+.user-card:hover{border-color:var(--border2)}
+.uc-left{display:flex;align-items:center;gap:12px}
+.uc-avatar{width:40px;height:40px;border-radius:50%;background:var(--gold-dim);border:1.5px solid var(--border2);display:flex;align-items:center;justify-content:center;font-size:13px;font-weight:700;color:var(--gold);flex-shrink:0}
+.uc-name{font-weight:600;font-size:14px}
+.uc-meta{font-size:11px;color:var(--text2);margin-top:3px;display:flex;align-items:center;gap:6px;flex-wrap:wrap}
+.uc-right{display:flex;gap:8px;align-items:center;flex-shrink:0}
+
+::-webkit-scrollbar{width:5px;height:5px}
+::-webkit-scrollbar-track{background:var(--navy)}
+::-webkit-scrollbar-thumb{background:var(--navy4);border-radius:3px}
+::-webkit-scrollbar-thumb:hover{background:var(--text3)}
+
+@media(max-width:768px){
+  .metrics{grid-template-columns:1fr 1fr}
+  .g2,.g3{grid-template-columns:1fr}
+  .fg{grid-template-columns:1fr}
+  .user-grid{grid-template-columns:1fr}
+  nav button{padding:11px 10px;font-size:10px}
+  header{padding:0 1rem}
+  main{padding:1rem}
+  .hdate{display:none}
+  .user-chip .u-role{display:none}
+}
+@media print{
+  #splash,#login-screen,header,nav,.no-print{display:none!important}
+  body{background:white;color:black}
+  .card{border:1px solid #ccc;margin-bottom:.5rem}
+  .card-title,.rsec-title{color:black}
+  .metric .val{color:black}
+}
+</style>
+</head>
+<body>
+
+<!-- SPLASH -->
+<div id="splash">
+  <div class="splash-crest">DCR</div>
+  <div class="splash-text">D.C.R Clarendon</div>
+  <div class="splash-sub">Case File Quality Tracker</div>
+  <div class="splash-spin"></div>
+</div>
+
+<!-- LOGIN -->
+<div id="login-screen">
+  <div class="login-box">
+    <div class="login-crest">DCR</div>
+    <div class="login-title">D.C.R Clarendon</div>
+    <div class="login-sub">Case File Quality Tracker</div>
+    <div class="login-card">
+      <div class="form-title">Officer sign in</div>
+      <div id="login-err" class="login-err"></div>
+      <div class="lf"><label>Username</label><input type="text" id="l-user" placeholder="Enter your full name" autocomplete="username"></div>
+      <div class="lf"><label>Password</label><input type="password" id="l-pass" placeholder="Enter your password" autocomplete="current-password"></div>
+      <button class="login-btn" id="login-btn" onclick="doLogin()">Sign in</button>
+      <div class="login-hint">Contact your administrator if you cannot access your account.</div>
+      <div style="margin-top:1.5rem;text-align:center">
+        <button id="emergency-reset-btn" onclick="emergencyReset()" style="background:transparent;border:1px solid rgba(201,168,76,.3);color:var(--text3);font-size:11px;padding:6px 14px;border-radius:6px;cursor:pointer;font-family:'DM Sans',sans-serif;letter-spacing:.5px">
+            Emergency account reset
+        </button>
+        <div id="emergency-status" style="font-size:11px;margin-top:8px;display:none"></div>
+      </div>
+    </div>
+  </div>
+</div>
+
+<!-- CHANGE PW MODAL -->
+<div id="cpw-modal">
+  <div class="modal-box">
+    <div class="modal-title">Set your password</div>
+    <div class="modal-sub">You must create a personal password before continuing.</div>
+    <div class="modal-warn">This is your first login. Your temporary password must be changed now.</div>
+    <div class="lf"><label>New password</label><input type="password" id="np1" placeholder="Choose a strong password (min 6 characters)" autocomplete="new-password"></div>
+    <div class="lf" style="margin-bottom:1.25rem"><label>Confirm password</label><input type="password" id="np2" placeholder="Repeat your new password" autocomplete="new-password"></div>
+    <div id="cpw-err" class="login-err"></div>
+    <button class="login-btn" onclick="confirmPwChange()">Set password &amp; continue</button>
+  </div>
+</div>
+
+<!-- APP -->
+<div id="app">
+  <header>
+    <div class="hbrand">
+      <div class="hcrest">DCR</div>
+      <div><div class="htitle">D.C.R Clarendon</div><div class="hsub">Case File Quality Tracker</div></div>
+    </div>
+    <div class="hright">
+      <div class="hdate" id="hdate"></div>
+      <div class="sync-pill"><div class="sdot" id="sdot"></div><span id="slabel">Live</span></div>
+      <div class="user-chip">
+        <div class="u-avatar" id="u-av"></div>
+        <span class="u-name" id="u-nm"></span>
+        <span class="u-role" id="u-rl"></span>
+      </div>
+      <button class="btn-logout" onclick="doLogout()">Sign out</button>
+    </div>
+  </header>
+
+  <nav id="main-nav">
+    <button class="active" onclick="showView('dashboard')">Dashboard</button>
+    <button onclick="showView('entry')">Add record</button>
+    <button onclick="showView('records')">Records</button>
+    <button onclick="showView('report')">Report</button>
+    <button class="admin-tab" id="admin-nav-btn" style="display:none" onclick="showView('admin')">Admin panel</button>
+  </nav>
+
+  <main>
+
+    <!-- DASHBOARD -->
+    <div id="view-dashboard" class="view active">
+      <div class="metrics" id="metrics">
+        <div class="metric"><div class="lbl">Loading</div><div class="val">-</div></div>
+        <div class="metric"><div class="lbl">Loading</div><div class="val">-</div></div>
+        <div class="metric"><div class="lbl">Loading</div><div class="val">-</div></div>
+        <div class="metric"><div class="lbl">Loading</div><div class="val">-</div></div>
+      </div>
+      <div class="g2">
+        <div class="card"><div class="card-hdr"><div><div class="card-title">Deficiencies by station</div><div class="card-sub">All 12 locations</div></div></div><div class="cw" style="height:270px"><canvas id="c-st"></canvas></div></div>
+        <div class="card"><div class="card-hdr"><div><div class="card-title">By deficiency type</div><div class="card-sub">Distribution</div></div></div><div class="cw" style="height:270px"><canvas id="c-tp"></canvas></div></div>
+      </div>
+      <div class="g3">
+        <div class="card"><div class="card-hdr"><div><div class="card-title">Severity by station</div><div class="card-sub">Stacked comparison</div></div></div><div class="cw" style="height:240px"><canvas id="c-sv-st"></canvas></div></div>
+        <div class="card"><div class="card-hdr"><div><div class="card-title">Severity split</div><div class="card-sub">Overall breakdown</div></div></div><div class="cw" style="height:240px"><canvas id="c-sv-d"></canvas></div></div>
+      </div>
+      <div class="card"><div class="card-hdr"><div><div class="card-title">Top investigators by deficiency count</div><div class="card-sub">Highest to lowest</div></div></div><div class="cw" style="height:210px"><canvas id="c-inv"></canvas></div></div>
+    </div>
+
+    <!-- ADD RECORD -->
+    <div id="view-entry" class="view">
+      <div style="max-width:720px">
+        <div class="card">
+          <div class="card-hdr"><div><div class="card-title">New deficiency record</div><div class="card-sub">Fields marked * are required</div></div></div>
+          <div class="fsec">
+            <div class="fsec-title">File information</div>
+            <div class="fg">
+              <div class="field"><label>File / case number <span class="req">*</span></label><input type="text" id="f-file" placeholder="e.g. CR-2024-001"></div>
+              <div class="field"><label>Date reviewed</label><input type="date" id="f-date"></div>
+            </div>
+            <div class="fg">
+              <div class="field"><label>Station / location <span class="req">*</span></label>
+                <select id="f-station"><option value="">- select station -</option>
+                  <option>May Pen</option><option>Longville Park</option><option>Four Paths</option><option>Mocho</option><option>Chapelton</option><option>Crofts Hill</option><option>Rock River</option><option>Frankfield</option><option>Hayes</option><option>Lionel Town</option><option>Exeter</option><option>Milk River</option>
+                </select>
+              </div>
+              <div class="field"><label>Investigator name <span class="req">*</span></label><input type="text" id="f-inv" placeholder="Full name"></div>
+            </div>
+          </div>
+          <div class="fsec">
+            <div class="fsec-title">Deficiency details</div>
+            <div class="fg">
+              <div class="field"><label>Deficiency type <span class="req">*</span></label>
+                <select id="f-type"><option value="">- select type -</option>
+                  <option>Missing documentation</option><option>Incomplete statements</option><option>Procedural error</option><option>Evidence handling</option><option>Report not submitted</option><option>Late submission</option><option>Incorrect classification</option><option>Chain of custody issue</option><option>Witness information missing</option><option>Scene examination deficiency</option><option>Other</option>
+                </select>
+              </div>
+              <div class="field"><label>Severity <span class="req">*</span></label>
+                <select id="f-sev"><option value="">- select -</option><option>Minor</option><option>Moderate</option><option>Major</option></select>
+              </div>
+            </div>
+            <div class="field" style="margin-bottom:12px"><label>Reviewing officer</label><input type="text" id="f-reviewer" placeholder="Name of officer conducting the review"></div>
+            <div class="field"><label>Notes / details</label><textarea id="f-notes" placeholder="Describe the deficiency in full detail..."></textarea></div>
+          </div>
+          <div class="brow">
+            <button class="btn btn-gold" id="save-btn" onclick="saveRecord()">Save record</button>
+            <button class="btn no-print" onclick="clearForm()">Clear form</button>
+          </div>
+        </div>
+      </div>
+    </div>
+
+    <!-- RECORDS -->
+    <div id="view-records" class="view">
+      <div class="card">
+        <div class="card-hdr">
+          <div><div class="card-title" id="rec-title">All records</div><div class="card-sub" id="rec-sub"></div></div>
+          <div class="brow no-print">
+            <button class="btn btn-sm" onclick="exportCSV()">Export CSV</button>
+            <button class="btn btn-sm" onclick="refreshRecords()">Refresh</button>
+          </div>
+        </div>
+        <div class="filters">
+          <select id="fil-st" onchange="applyFilters()"><option value="">All stations</option>
+            <option>May Pen</option><option>Longville Park</option><option>Four Paths</option><option>Mocho</option><option>Chapelton</option><option>Crofts Hill</option><option>Rock River</option><option>Frankfield</option><option>Hayes</option><option>Lionel Town</option><option>Exeter</option><option>Milk River</option>
+          </select>
+          <select id="fil-sv" onchange="applyFilters()"><option value="">All severities</option><option>Minor</option><option>Moderate</option><option>Major</option></select>
+          <select id="fil-tp" onchange="applyFilters()"><option value="">All types</option>
+            <option>Missing documentation</option><option>Incomplete statements</option><option>Procedural error</option><option>Evidence handling</option><option>Report not submitted</option><option>Late submission</option><option>Incorrect classification</option><option>Chain of custody issue</option><option>Witness information missing</option><option>Scene examination deficiency</option><option>Other</option>
+          </select>
+          <input type="text" id="fil-q" placeholder="Search file, investigator, notes..." oninput="applyFilters()">
+        </div>
+        <div id="rec-load" class="loading"><div class="spin"></div>Loading records...</div>
+        <div class="tw" id="rec-wrap" style="display:none">
+          <table>
+            <thead><tr><th>Date</th><th>File no.</th><th>Station</th><th>Investigator</th><th>Type</th><th>Severity</th><th>Reviewer</th><th>Added by</th><th>Notes</th><th class="no-print"></th></tr></thead>
+            <tbody id="rec-body"></tbody>
+          </table>
+        </div>
+      </div>
+    </div>
+
+    <!-- REPORT -->
+    <div id="view-report" class="view">
+      <div class="card">
+        <div class="card-hdr">
+          <div><div class="card-title">Analytical quality report</div><div class="card-sub" id="rpt-meta"></div></div>
+          <button class="btn btn-gold btn-sm no-print" onclick="window.print()">Print / PDF</button>
+        </div>
+        <div id="rpt-load" class="loading"><div class="spin"></div>Generating report...</div>
+        <div id="rpt-body"></div>
+      </div>
+    </div>
+
+    <!-- ADMIN -->
+    <div id="view-admin" class="view">
+      <div class="card">
+        <div class="card-hdr">
+          <div><div class="card-title">User management</div><div class="card-sub">Create accounts, reset passwords, manage access</div></div>
+          <div class="brow">
+            <button class="btn btn-sm btn-blue no-print" onclick="toggleCreateUser()">+ Create user</button>
+            <button class="btn btn-sm btn-danger no-print" onclick="deleteAllUsers()" style="border-color:rgba(192,57,43,.5)">Delete all users</button>
+          </div>
+        </div>
+        <div id="cu-form" style="display:none;margin-bottom:1.5rem">
+          <div style="background:var(--navy3);border:1px solid var(--border);border-radius:var(--rlg);padding:1.25rem">
+            <div class="fsec-title" style="margin-bottom:1rem">New user account</div>
+            <div class="fg" style="margin-bottom:12px">
+              <div class="field"><label>Full name (becomes username) <span class="req">*</span></label><input type="text" id="nu-name" placeholder="e.g. John Brown"></div>
+              <div class="field"><label>Role <span class="req">*</span></label><select id="nu-role"><option value="officer">Officer</option><option value="admin">Administrator</option></select></div>
+            </div>
+            <div class="fg" style="margin-bottom:1rem">
+              <div class="field"><label>Temporary password <span class="req">*</span></label><input type="text" id="nu-pass" placeholder="They will change this on first login"></div>
+              <div class="field"><label>Station</label>
+                <select id="nu-st"><option value="">- select station -</option>
+                  <option>May Pen</option><option>Longville Park</option><option>Four Paths</option><option>Mocho</option><option>Chapelton</option><option>Crofts Hill</option><option>Rock River</option><option>Frankfield</option><option>Hayes</option><option>Lionel Town</option><option>Exeter</option><option>Milk River</option>
+                </select>
+              </div>
+            </div>
+            <div class="brow"><button class="btn btn-gold btn-sm" onclick="createUser()">Create account</button><button class="btn btn-sm" onclick="toggleCreateUser()">Cancel</button></div>
+          </div>
+        </div>
+        <div id="admin-load" class="loading"><div class="spin"></div>Loading users...</div>
+        <div id="admin-grid" class="user-grid" style="display:none"></div>
+      </div>
+      <div class="card">
+        <div class="card-hdr"><div><div class="card-title">Officer activity</div><div class="card-sub">Records submitted per officer</div></div></div>
+        <div id="admin-act"></div>
+      </div>
+    </div>
+
+  </main>
+</div>
+
+<div id="toast" class="toast"></div>
+
+<script>
+// =======================================
+//  CONSTANTS & STATE
+// =======================================
+const STATIONS=['May Pen','Longville Park','Four Paths','Mocho','Chapelton','Crofts Hill','Rock River','Frankfield','Hayes','Lionel Town','Exeter','Milk River'];
+const CPALS=['#c9a84c','#4ec989','#e87c6e','#7f8fe4','#f0a832','#6ecfc9','#e87cb8','#a89f8c','#5bc4e8','#9fe17f','#e8cf6e','#c96e8e'];
+let allRecords=[],currentUser=null,currentView='dashboard',charts={};
+
+// =======================================
+//  HASH (simple, non-cryptographic)
+// =======================================
+window._hash=function(str){
+  let h=5381;
+  for(let i=0;i<str.length;i++)h=((h<<5)+h)^str.charCodeAt(i);
+  return(h>>>0).toString(36)+str.length.toString(36)+str.slice(-2);
+};
+
+// =======================================
+//  WAIT FOR FIREBASE
+// =======================================
+function waitForFB(){
+  return new Promise(res=>{
+    if(window._fbReady){res();return;}
+    document.addEventListener('fb-ready',res,{once:true});
+  });
+}
+
+// =======================================
+//  AUTH
+// =======================================
+async function doLogin(){
+  const username=document.getElementById('l-user').value.trim();
+  const password=document.getElementById('l-pass').value; // never trim - passwords are case/space sensitive
+  const err=document.getElementById('login-err');
+  const btn=document.getElementById('login-btn');
+  err.style.display='none';
+  if(!username||!password){err.textContent='Please enter your username and password.';err.style.display='block';return;}
+  btn.disabled=true;btn.textContent='Signing in...';
+  try{
+    // Always fetch all users and match by displayName (case-insensitive, whitespace-tolerant)
+    // This avoids key mismatch issues from varying input formats
+    const all=await window._db.getAllUsers();
+    const normalise=s=>s.toLowerCase().replace(/\s+/g,' ').trim();
+    let udata=all.find(u=>normalise(u.displayName)===normalise(username))||null;
+    // Fallback: also try matching by the stored username field or key
+    if(!udata){
+      udata=all.find(u=>(u.username||'').toLowerCase()===username.toLowerCase())||null;
+    }
+    btn.disabled=false;btn.textContent='Sign in';
+    if(!udata){err.textContent='Username not found. Check with your administrator.';err.style.display='block';return;}
+    if(!udata.active){err.textContent='This account has been deactivated. Contact your administrator.';err.style.display='block';return;}
+    if(udata.passwordHash!==window._hash(password)){err.textContent='Incorrect password. Please try again.';err.style.display='block';return;}
+    currentUser=udata;
+    if(udata.mustChange){showCPWModal();return;}
+    launchApp();
+  }catch(e){
+    btn.disabled=false;btn.textContent='Sign in';
+    err.textContent='Connection error. Please check your internet and try again.';err.style.display='block';
+  }
+}
+
+function showCPWModal(){document.getElementById('cpw-modal').classList.add('open');}
+
+async function confirmPwChange(){
+  const p1=document.getElementById('np1').value; // no trim - preserve exact password
+  const p2=document.getElementById('np2').value;
+  const err=document.getElementById('cpw-err');
+  err.style.display='none';
+  if(p1.length<6){err.textContent='Password must be at least 6 characters.';err.style.display='block';return;}
+  if(p1!==p2){err.textContent='Passwords do not match.';err.style.display='block';return;}
+  currentUser.passwordHash=window._hash(p1);
+  currentUser.mustChange=false;
+  const ok=await window._db.saveUser(currentUser);
+  if(ok){document.getElementById('cpw-modal').classList.remove('open');launchApp();}
+  else{err.textContent='Failed to save password. Please try again.';err.style.display='block';}
+}
+
+function launchApp(){
+  document.getElementById('login-screen').style.display='none';
+  document.getElementById('app').classList.add('visible');
+  document.getElementById('hdate').textContent=new Date().toLocaleDateString('en-JM',{weekday:'long',year:'numeric',month:'long',day:'numeric'});
+  document.getElementById('f-date').value=new Date().toISOString().split('T')[0];
+  const ini=currentUser.displayName.split(' ').map(w=>w[0]).join('').slice(0,2).toUpperCase();
+  document.getElementById('u-av').textContent=ini;
+  document.getElementById('u-nm').textContent=currentUser.displayName;
+  document.getElementById('u-rl').textContent=currentUser.role==='admin'?'   Admin':'';
+  if(currentUser.role==='admin')document.getElementById('admin-nav-btn').style.display='';
+  document.getElementById('f-reviewer').value=currentUser.displayName;
+  showView('dashboard');
+}
+
+function doLogout(){
+  currentUser=null;allRecords=[];
+  document.getElementById('app').classList.remove('visible');
+  document.getElementById('login-screen').style.display='flex';
+  document.getElementById('l-user').value='';document.getElementById('l-pass').value='';
+  document.getElementById('login-err').style.display='none';
+  document.getElementById('admin-nav-btn').style.display='none';
+  Object.values(charts).forEach(c=>c.destroy());charts={};
+}
+
+// =======================================
+//  RECORDS
+// =======================================
+async function loadRecords(){
+  setSync('syncing');
+  try{allRecords=await window._db.getAllRecords();setSync('live');}
+  catch(e){setSync('error');}
+  return allRecords;
+}
+
+async function saveRecord(){
+  const file=document.getElementById('f-file').value.trim();
+  const date=document.getElementById('f-date').value;
+  const station=document.getElementById('f-station').value;
+  const inv=document.getElementById('f-inv').value.trim();
+  const type=document.getElementById('f-type').value;
+  const sev=document.getElementById('f-sev').value;
+  const reviewer=document.getElementById('f-reviewer').value.trim();
+  const notes=document.getElementById('f-notes').value.trim();
+  if(!file||!station||!inv||!type||!sev){showToast('Please fill in all required fields.','error');return;}
+  const btn=document.getElementById('save-btn');
+  btn.disabled=true;btn.textContent='Saving...';
+  const id='REC_'+Date.now()+'_'+Math.random().toString(36).slice(2,6).toUpperCase();
+  const rec={id,file,date:date||new Date().toISOString().split('T')[0],station,inv,type,sev,reviewer,notes,addedBy:currentUser.displayName,created:new Date().toISOString()};
+  const ok=await window._db.saveRecord(rec);
+  btn.disabled=false;btn.textContent='Save record';
+  if(ok){allRecords.unshift(rec);clearForm();showToast('Record saved and shared with team.','success');}
+  else showToast('Save failed. Please check your connection.','error');
+}
+
+async function deleteRecord(id){
+  if(!confirm('Delete this record permanently? This cannot be undone.'))return;
+  const ok=await window._db.deleteRecord(id);
+  if(ok){allRecords=allRecords.filter(r=>r.id!==id);renderRecordsTable(getFiltered());if(currentView==='dashboard')renderDashboard();showToast('Record deleted.','success');}
+  else showToast('Delete failed.','error');
+}
+
+function getFiltered(){
+  const s=document.getElementById('fil-st')?.value||'';
+  const sv=document.getElementById('fil-sv')?.value||'';
+  const tp=document.getElementById('fil-tp')?.value||'';
+  const q=(document.getElementById('fil-q')?.value||'').toLowerCase();
+  return allRecords.filter(r=>{
+    if(s&&r.station!==s)return false;
+    if(sv&&r.sev!==sv)return false;
+    if(tp&&r.type!==tp)return false;
+    if(q&&![r.inv,r.file,r.notes||'',r.addedBy||''].some(v=>v.toLowerCase().includes(q)))return false;
+    return true;
+  });
+}
+function applyFilters(){renderRecordsTable(getFiltered());}
+
+function renderRecordsTable(rows){
+  document.getElementById('rec-load').style.display='none';
+  document.getElementById('rec-wrap').style.display='block';
+  document.getElementById('rec-title').textContent=`Records (${rows.length})`;
+  document.getElementById('rec-sub').textContent=`${allRecords.length} total   refreshed ${new Date().toLocaleTimeString('en-JM')}`;
+  const body=document.getElementById('rec-body');
+  if(!rows.length){body.innerHTML=`<tr><td colspan="10"><div class="empty">No records match the current filters.</div></td></tr>`;return;}
+  body.innerHTML=rows.map(r=>`
+    <tr>
+      <td style="font-family:'DM Mono',monospace;font-size:11px;white-space:nowrap">${r.date}</td>
+      <td style="font-weight:600;font-family:'DM Mono',monospace;color:var(--gold2);font-size:12px">${r.file}</td>
+      <td style="font-size:12px">${r.station}</td>
+      <td style="font-size:12px">${r.inv}</td>
+      <td style="color:var(--text2);font-size:12px">${r.type}</td>
+      <td><span class="badge sev-${r.sev}">${r.sev}</span></td>
+      <td style="color:var(--text2);font-size:12px">${r.reviewer||'-'}</td>
+      <td style="color:var(--text3);font-size:11px">${r.addedBy||'-'}</td>
+      <td style="color:var(--text3);max-width:160px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;font-size:12px" title="${(r.notes||'').replace(/"/g,'&quot;')}">${r.notes||'-'}</td>
+      ${currentUser?.role==='admin'?`<td class="no-print"><button class="btn btn-danger btn-sm" onclick="deleteRecord('${r.id}')">Del</button></td>`:'<td></td>'}
+    </tr>`).join('');
+}
+
+async function refreshRecords(){
+  document.getElementById('rec-load').style.display='flex';
+  document.getElementById('rec-wrap').style.display='none';
+  await loadRecords();renderRecordsTable(getFiltered());
+}
+
+// =======================================
+//  DASHBOARD CHARTS
+// =======================================
+const dc=id=>{if(charts[id]){charts[id].destroy();delete charts[id];}};
+const GS={responsive:true,maintainAspectRatio:false};
+const TX=c=>({color:c,font:{size:9},maxRotation:45,autoSkip:false});
+const GL=()=>({color:'rgba(255,255,255,0.04)'});
+
+function renderDashboard(){
+  const total=allRecords.length,major=allRecords.filter(r=>r.sev==='Major').length;
+  const sts=new Set(allRecords.map(r=>r.station)).size,invs=new Set(allRecords.map(r=>r.inv)).size;
+  document.getElementById('metrics').innerHTML=`
+    <div class="metric"><div class="lbl">Total deficiencies</div><div class="val">${total}</div><div class="sub">across all stations</div></div>
+    <div class="metric red"><div class="lbl">Major deficiencies</div><div class="val">${major}</div><div class="sub">${total?Math.round(major/total*100):0}% of total</div></div>
+    <div class="metric"><div class="lbl">Stations tracked</div><div class="val">${sts}</div><div class="sub">of 12 locations</div></div>
+    <div class="metric green"><div class="lbl">Investigators flagged</div><div class="val">${invs}</div><div class="sub">unique personnel</div></div>`;
+
+  const sc=STATIONS.map(s=>allRecords.filter(r=>r.station===s).length);
+  dc('st');charts['st']=new Chart(document.getElementById('c-st'),{type:'bar',data:{labels:STATIONS,datasets:[{data:sc,backgroundColor:'rgba(201,168,76,.45)',borderColor:'rgba(201,168,76,.85)',borderWidth:1,borderRadius:4}]},options:{...GS,plugins:{legend:{display:false}},scales:{x:{ticks:TX('#5e5649'),grid:GL()},y:{ticks:{color:'#5e5649',stepSize:1},grid:GL(),beginAtZero:true}}}});
+
+  const ty={};allRecords.forEach(r=>{ty[r.type]=(ty[r.type]||0)+1;});
+  const tl=Object.keys(ty),td=tl.map(t=>ty[t]);
+  dc('tp');charts['tp']=new Chart(document.getElementById('c-tp'),{type:'doughnut',data:{labels:tl,datasets:[{data:td,backgroundColor:CPALS.slice(0,tl.length),borderWidth:2,borderColor:'#131f2e'}]},options:{...GS,plugins:{legend:{position:'bottom',labels:{color:'#9e9282',font:{size:10},boxWidth:10,padding:9}}}}});
+
+  dc('sv-st');charts['sv-st']=new Chart(document.getElementById('c-sv-st'),{type:'bar',data:{labels:STATIONS,datasets:[{label:'Major',data:STATIONS.map(s=>allRecords.filter(r=>r.station===s&&r.sev==='Major').length),backgroundColor:'rgba(192,57,43,.7)',borderRadius:3},{label:'Moderate',data:STATIONS.map(s=>allRecords.filter(r=>r.station===s&&r.sev==='Moderate').length),backgroundColor:'rgba(212,135,10,.7)',borderRadius:3},{label:'Minor',data:STATIONS.map(s=>allRecords.filter(r=>r.station===s&&r.sev==='Minor').length),backgroundColor:'rgba(26,122,74,.7)',borderRadius:3}]},options:{...GS,plugins:{legend:{labels:{color:'#9e9282',font:{size:10},boxWidth:10}}},scales:{x:{stacked:true,ticks:TX('#5e5649'),grid:GL()},y:{stacked:true,beginAtZero:true,ticks:{color:'#5e5649',stepSize:1},grid:GL()}}}});
+
+  const svn={Major:allRecords.filter(r=>r.sev==='Major').length,Moderate:allRecords.filter(r=>r.sev==='Moderate').length,Minor:allRecords.filter(r=>r.sev==='Minor').length};
+  dc('sv-d');charts['sv-d']=new Chart(document.getElementById('c-sv-d'),{type:'doughnut',data:{labels:['Major','Moderate','Minor'],datasets:[{data:Object.values(svn),backgroundColor:['rgba(192,57,43,.8)','rgba(212,135,10,.8)','rgba(26,122,74,.8)'],borderWidth:2,borderColor:'#131f2e'}]},options:{...GS,plugins:{legend:{position:'bottom',labels:{color:'#9e9282',font:{size:10},boxWidth:10,padding:9}}}}});
+
+  const ic={};allRecords.forEach(r=>{ic[r.inv]=(ic[r.inv]||0)+1;});
+  const is=Object.entries(ic).sort((a,b)=>b[1]-a[1]).slice(0,10);
+  dc('inv');charts['inv']=new Chart(document.getElementById('c-inv'),{type:'bar',data:{labels:is.map(x=>x[0]),datasets:[{data:is.map(x=>x[1]),backgroundColor:'rgba(228,112,89,.6)',borderColor:'rgba(228,112,89,.9)',borderWidth:1,borderRadius:4}]},options:{indexAxis:'y',...GS,plugins:{legend:{display:false}},scales:{x:{beginAtZero:true,ticks:{color:'#5e5649',stepSize:1},grid:GL()},y:{ticks:{color:'#9e9282',font:{size:11}}}}}});
+}
+
+// =======================================
+//  REPORT
+// =======================================
+function renderReport(){
+  document.getElementById('rpt-load').style.display='flex';
+  document.getElementById('rpt-body').innerHTML='';
+  const total=allRecords.length;
+  document.getElementById('rpt-meta').textContent=`Generated: ${new Date().toLocaleDateString('en-JM',{year:'numeric',month:'long',day:'numeric'})}     Total records: ${total}`;
+  if(!total){document.getElementById('rpt-load').style.display='none';document.getElementById('rpt-body').innerHTML='<div class="empty">No records to report on yet.</div>';return;}
+  const sd=STATIONS.map(s=>{const sr=allRecords.filter(r=>r.station===s);return{station:s,total:sr.length,major:sr.filter(r=>r.sev==='Major').length,mod:sr.filter(r=>r.sev==='Moderate').length,min:sr.filter(r=>r.sev==='Minor').length};}).filter(d=>d.total>0).sort((a,b)=>b.total-a.total);
+  const mx=sd[0]?.total||1;
+  const sbars=sd.map(d=>`<div class="rbar"><div class="rbar-lbl">${d.station}</div><div class="rbar-track"><div class="rbar-fill" style="width:${Math.round(d.total/mx*100)}%"></div></div><div class="rbar-n">${d.total}</div><div style="display:flex;gap:4px;margin-left:8px">${d.major?`<span class="badge sev-Major">${d.major}</span>`:''}${d.mod?`<span class="badge sev-Moderate">${d.mod}</span>`:''}${d.min?`<span class="badge sev-Minor">${d.min}</span>`:''}</div></div>`).join('');
+  const im={};allRecords.forEach(r=>{if(!im[r.inv])im[r.inv]={station:r.station,total:0,Major:0,Moderate:0,Minor:0};im[r.inv].total++;im[r.inv][r.sev]++;});
+  const ir=Object.entries(im).sort((a,b)=>b[1].total-a[1].total).map(([n,d])=>`<tr><td style="font-weight:600">${n}</td><td>${d.station}</td><td style="text-align:center;font-weight:700;font-family:'DM Mono',monospace;color:var(--gold2)">${d.total}</td><td style="text-align:center">${d.Major?`<span class="badge sev-Major">${d.Major}</span>`:'-'}</td><td style="text-align:center">${d.Moderate?`<span class="badge sev-Moderate">${d.Moderate}</span>`:'-'}</td><td style="text-align:center">${d.Minor?`<span class="badge sev-Minor">${d.Minor}</span>`:'-'}</td></tr>`).join('');
+  const tm={};allRecords.forEach(r=>{tm[r.type]=(tm[r.type]||0)+1;});
+  const tr2=Object.entries(tm).sort((a,b)=>b[1]-a[1]).map(([t,c])=>`<tr><td>${t}</td><td style="text-align:center;font-weight:700;font-family:'DM Mono',monospace;color:var(--gold2)">${c}</td><td style="text-align:center">${Math.round(c/total*100)}%</td></tr>`).join('');
+  document.getElementById('rpt-load').style.display='none';
+  document.getElementById('rpt-body').innerHTML=`
+    <div class="rsec"><div class="rsec-title">Station performance</div>${sbars}</div>
+    <hr class="div">
+    <div class="rsec"><div class="rsec-title">By investigator</div><div class="tw"><table><thead><tr><th>Investigator</th><th>Station</th><th style="text-align:center">Total</th><th style="text-align:center">Major</th><th style="text-align:center">Moderate</th><th style="text-align:center">Minor</th></tr></thead><tbody>${ir}</tbody></table></div></div>
+    <hr class="div">
+    <div class="rsec"><div class="rsec-title">By deficiency type</div><div class="tw"><table><thead><tr><th>Deficiency type</th><th style="text-align:center">Count</th><th style="text-align:center">% of total</th></tr></thead><tbody>${tr2}</tbody></table></div></div>`;
+}
+
+// =======================================
+//  ADMIN
+// =======================================
+function toggleCreateUser(){
+  const f=document.getElementById('cu-form');
+  f.style.display=f.style.display==='none'?'block':'none';
+}
+
+async function createUser(){
+  const name=document.getElementById('nu-name').value.trim();
+  const role=document.getElementById('nu-role').value;
+  // Do NOT trim password - preserve exact characters including case
+  const pass=document.getElementById('nu-pass').value;
+  const station=document.getElementById('nu-st').value;
+  if(!name||!pass){showToast('Name and password are required.','error');return;}
+  if(pass.length<4){showToast('Password must be at least 4 characters.','error');return;}
+  // Always overwrite - this also fixes accounts that are stuck/inactive/corrupt
+  const user={username:name.toUpperCase().replace(/\s+/g,'_'),displayName:name,role,passwordHash:window._hash(pass),mustChange:true,station,active:true,created:new Date().toISOString()};
+  const ok=await window._db.saveUser(user);
+  if(ok){
+    showToast(`Account created for ${name}. Password: "${pass}" - they will set a new one on first login.`,'success');
+    document.getElementById('nu-name').value='';document.getElementById('nu-pass').value='';document.getElementById('nu-st').value='';
+    document.getElementById('cu-form').style.display='none';
+    loadAdminUsers();
+  }else showToast('Failed to create user. Check your connection.','error');
+}
+
+async function loadAdminUsers(){
+  document.getElementById('admin-load').style.display='flex';
+  document.getElementById('admin-grid').style.display='none';
+  const users=await window._db.getAllUsers();
+  const grid=document.getElementById('admin-grid');
+  document.getElementById('admin-load').style.display='none';
+  if(!users.length){grid.innerHTML='<div class="empty">No users found.</div>';grid.style.display='block';return;}
+  grid.style.display='grid';
+  // Use _docId returned from getAllUsers for precise deletion
+  grid.innerHTML=users.sort((a,b)=>a.displayName.localeCompare(b.displayName)).map((u,idx)=>{
+    const ini=u.displayName.split(' ').map(w=>w[0]).join('').slice(0,2).toUpperCase();
+    // isSelf: match by username field or exact displayName AND role
+    const isSelf=u._docId ? u._docId===(currentUser._docId||currentUser.username||currentUser.displayName.toUpperCase().replace(/\s+/g,'_')) : (u.username||u.displayName.toUpperCase().replace(/\s+/g,'_'))===(currentUser.username||currentUser.displayName.toUpperCase().replace(/\s+/g,'_'));
+    const docKey=u._docId||u.username||u.displayName.toUpperCase().replace(/\s+/g,'_');
+    return `<div class="user-card">
+      <div class="uc-left">
+        <div class="uc-avatar">${ini}</div>
+        <div>
+          <div class="uc-name">${u.displayName}${isSelf?' <span style="font-size:10px;color:var(--text3)">(you)</span>':''}</div>
+          <div class="uc-meta">
+            <span class="badge ${u.role==='admin'?'role-admin':'role-officer'}" style="font-size:10px;padding:2px 7px">${u.role}</span>
+            ${u.station?`<span>${u.station}</span>`:''}
+            ${u.mustChange?`<span style="color:var(--amber-t);font-size:10px">pw change required</span>`:''}
+            <span class="badge ${u.active?'status-active':'status-inactive'}" style="font-size:10px;padding:2px 7px">${u.active?'Active':'Inactive'}</span>
+          </div>
+        </div>
+      </div>
+      <div class="uc-right">
+        ${!isSelf?`<button class="btn btn-sm ${u.active?'btn-danger':'btn-blue'}" onclick="toggleActive('${u.displayName}',${u.active})">${u.active?'Deactivate':'Activate'}</button>`:''}
+        ${!isSelf?`<button class="btn btn-sm" onclick="adminResetPw('${u.displayName}')">Reset pw</button>`:''}
+        ${!isSelf?`<button class="btn btn-sm btn-danger" onclick="deleteUserByKey('${docKey}','${u.displayName}')" style="border-color:rgba(192,57,43,.5);color:var(--red-t)">  Delete</button>`:''}
+      </div>
+    </div>`;}).join('');
+
+  // Activity
+  const actDiv=document.getElementById('admin-act');
+  const uc={};allRecords.forEach(r=>{uc[r.addedBy||'Unknown']=(uc[r.addedBy||'Unknown']||0)+1;});
+  if(!Object.keys(uc).length){actDiv.innerHTML='<div class="empty">No records submitted yet.</div>';return;}
+  const mx2=Math.max(...Object.values(uc));
+  actDiv.innerHTML=Object.entries(uc).sort((a,b)=>b[1]-a[1]).map(([name,count])=>`
+    <div class="rbar">
+      <div class="rbar-lbl">${name}</div>
+      <div class="rbar-track"><div class="rbar-fill" style="width:${Math.round(count/mx2*100)}%;background:var(--blue-t)"></div></div>
+      <div class="rbar-n" style="color:var(--blue-t)">${count}</div>
+    </div>`).join('');
+}
+
+async function toggleActive(displayName,currentlyActive){
+  const u=await window._db.getUser(displayName);
+  if(!u){showToast('User not found.','error');return;}
+  u.active=!currentlyActive;
+  const ok=await window._db.saveUser(u);
+  if(ok){showToast(`${displayName} has been ${u.active?'activated':'deactivated'}.`,'info');loadAdminUsers();}
+  else showToast('Operation failed.','error');
+}
+
+async function adminResetPw(displayName){
+  const newPw=prompt(`Set a new temporary password for ${displayName}:`);
+  if(!newPw||!newPw.trim()){return;}
+  if(newPw.trim().length<4){showToast('Password too short (minimum 4 characters).','error');return;}
+  const all=await window._db.getAllUsers();
+  const normalise=s=>s.toLowerCase().replace(/\s+/g,' ').trim();
+  const u=all.find(x=>normalise(x.displayName)===normalise(displayName));
+  if(!u){showToast('User not found.','error');return;}
+  u.passwordHash=window._hash(newPw.trim());
+  u.mustChange=true;
+  const ok=await window._db.saveUser(u);
+  if(ok)showToast(`Password reset for ${displayName}. They will be prompted to change it on next login.`,'success');
+  else showToast('Reset failed.','error');
+}
+
+async function deleteUser(displayName){
+  if(!confirm(`Permanently delete the account for ${displayName}? This cannot be undone.`))return;
+  const ok=await window._db.deleteUser(displayName);
+  if(ok){showToast(`${displayName}'s account has been deleted.`,'info');loadAdminUsers();}
+  else showToast('Delete failed. Please try again.','error');
+}
+
+async function deleteUserByKey(docKey, displayName){
+  if(!confirm(`Permanently delete the account for "${displayName}"? This cannot be undone.`))return;
+  const ok=await window._db.deleteUserByKey(docKey);
+  if(ok){showToast(`${displayName}'s account has been deleted.`,'info');loadAdminUsers();}
+  else showToast('Delete failed. Please try again.','error');
+}
+
+async function deleteAllUsers(){
+  if(!confirm('Delete ALL user accounts except your own? This cannot be undone.\n\nYou will need to recreate each account from the Admin panel.'))return;
+  if(!confirm('Are you absolutely sure? All staff will lose access immediately.'))return;
+  const ok=await window._db.deleteAllUsersExceptSelf(currentUser.displayName);
+  if(ok){showToast('All other accounts deleted. You can now recreate them from the Admin panel.','info');loadAdminUsers();}
+  else showToast('Bulk delete failed. Please try again.','error');
+}
+
+// =======================================
+//  NAVIGATION
+// =======================================
+async function showView(v){
+  currentView=v;
+  document.querySelectorAll('.view').forEach(el=>el.classList.remove('active'));
+  document.querySelectorAll('nav button').forEach(el=>el.classList.remove('active'));
+  document.getElementById('view-'+v).classList.add('active');
+  document.querySelectorAll('nav button').forEach(b=>{
+    const m=b.getAttribute('onclick')?.match(/'(\w+)'/);
+    if(m&&m[1]===v)b.classList.add('active');
+  });
+  if(v==='dashboard'){await loadRecords();renderDashboard();}
+  if(v==='records'){document.getElementById('rec-load').style.display='flex';document.getElementById('rec-wrap').style.display='none';await loadRecords();renderRecordsTable(getFiltered());}
+  if(v==='report'){await loadRecords();renderReport();}
+  if(v==='admin'){await loadRecords();loadAdminUsers();}
+}
+
+// =======================================
+//  UTILITIES
+// =======================================
+function clearForm(){
+  ['f-file','f-inv','f-notes'].forEach(id=>document.getElementById(id).value='');
+  ['f-station','f-type','f-sev'].forEach(id=>document.getElementById(id).value='');
+  document.getElementById('f-date').value=new Date().toISOString().split('T')[0];
+  document.getElementById('f-reviewer').value=currentUser?.displayName||'';
+}
+
+function setSync(s){
+  const d=document.getElementById('sdot'),l=document.getElementById('slabel');
+  if(!d)return;
+  if(s==='syncing'){d.style.background='#f0a832';l.textContent='Syncing';}
+  else if(s==='live'){d.style.background='#4ec989';l.textContent='Live';}
+  else{d.style.background='#e87c6e';l.textContent='Offline';}
+}
+
+function showToast(msg,type='success'){
+  const t=document.getElementById('toast');
+  t.textContent=msg;t.className=`toast ${type} show`;
+  setTimeout(()=>t.classList.remove('show'),3500);
+}
+
+function exportCSV(){
+  const rows=getFiltered();
+  if(!rows.length){showToast('No records to export.','error');return;}
+  const hdr=['Date','File No.','Station','Investigator','Deficiency Type','Severity','Reviewing Officer','Added By','Notes'];
+  const csv=[hdr,...rows.map(r=>[r.date,r.file,r.station,r.inv,r.type,r.sev,r.reviewer||'',r.addedBy||'',r.notes||''].map(v=>`"${String(v).replace(/"/g,'""')}"`))].map(r=>r.join(',')).join('\n');
+  const a=document.createElement('a');a.href='data:text/csv;charset=utf-8,'+encodeURIComponent(csv);a.download='DCR_Clarendon_'+new Date().toISOString().split('T')[0]+'.csv';a.click();
+  showToast(`Exported ${rows.length} records.`,'success');
+}
+
+// =======================================
+//  EMERGENCY RESET
+// =======================================
+async function emergencyReset(){
+  const btn=document.getElementById('emergency-reset-btn');
+  const status=document.getElementById('emergency-status');
+  btn.disabled=true;btn.textContent='Resetting...';
+  status.style.display='block';status.style.color='var(--amber-t)';status.textContent='Connecting to database...';
+  await waitForFB();
+  const ok=await window._db.forceResetUsers();
+  if(ok){
+    btn.style.display='none';
+    status.style.color='var(--green-t)';
+    status.textContent='  Done! Admin password: Admin1234   Craig Daly password: changeme (will be prompted to change it)';
+  } else {
+    btn.disabled=false;btn.textContent='  Emergency account reset';
+    status.style.color='var(--red-t)';status.textContent='Reset failed. Check your connection and try again.';
+  }
+}
+
+// Enter key
+document.getElementById('l-pass').addEventListener('keydown',e=>{if(e.key==='Enter')doLogin();});
+document.getElementById('l-user').addEventListener('keydown',e=>{if(e.key==='Enter')document.getElementById('l-pass').focus();});
+
+// =======================================
+//  INIT
+// =======================================
+(async()=>{
+  await waitForFB();
+  await window._db.initAdmin();
+  document.getElementById('splash').style.display='none';
+  document.getElementById('login-screen').style.display='flex';
+})();
+
+// Auto-refresh every 60s
+setInterval(async()=>{
+  if(!currentUser)return;
+  if(currentView==='dashboard'){await loadRecords();renderDashboard();}
+  if(currentView==='records'){await loadRecords();renderRecordsTable(getFiltered());}
+},60000);
+</script>
+</body>
+</html>
